@@ -2341,23 +2341,54 @@ async function init(){
     return err?.message || 'Không xác định';
   }
 
+  function refreshApiKeyStatus() {
+    const key = String(keyInput?.value || '').replace(/\s+/g, '');
+    if(keyInput && keyInput.value !== key) keyInput.value = key;
+
+    if(!key){
+      setSyncMsg('🔑 Chưa nhập API Key');
+      return false;
+    }
+
+    // Gemini API keys thường bắt đầu bằng AIza. Không chặn các key hợp lệ khác,
+    // chỉ hiển thị cảnh báo nhẹ nếu định dạng trông bất thường.
+    if(!/^AIza[A-Za-z0-9_-]{20,}$/.test(key)){
+      setSyncMsg('⚠️ Đã nhập API Key • kiểm tra lại định dạng', false, 'offline');
+      return true;
+    }
+
+    setSyncMsg('✅ API Key đã sẵn sàng', false, 'saved');
+    return true;
+  }
+
   async function triggerSync() {
-    const key = keyInput.value.replace(/\s+/g, '');
-    keyInput.value = key;
+    const key = String(keyInput?.value || '').replace(/\s+/g, '');
+    if(keyInput) keyInput.value = key;
     if (!key) {
+      refreshApiKeyStatus();
       alert('Vui lòng nhập Google Gemini API Key trước!');
       return;
     }
+
     localStorage.setItem(cfg('storage.geminiKeyName','econstudy_gemini_api_key'), key);
+    refreshApiKeyStatus();
+
     if (!auth?.currentUser) {
-      setSyncMsg('👤 Hãy đăng nhập tài khoản trước', true);
+      setSyncMsg('✅ API Key đã lưu • đăng nhập để đồng bộ dữ liệu', false, 'saved');
       return;
     }
+
     // Gemini API Key chỉ dùng để gọi AI, không quyết định kho dữ liệu.
     await syncFromCloud();
   }
 
   if (savedKey) keyInput.value = savedKey;
+  // Cập nhật ngay trạng thái khi key được nạp từ localStorage.
+  refreshApiKeyStatus();
+  // Một số trình duyệt/password manager tự điền sau DOMContentLoaded.
+  // Kiểm tra lại sau một nhịp để trạng thái không còn hiển thị sai.
+  setTimeout(refreshApiKeyStatus, 250);
+  setTimeout(refreshApiKeyStatus, 1000);
 
 
   bindPasswordEye(authPasswordEye, authPassword);
@@ -2497,10 +2528,15 @@ async function init(){
   keyInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') triggerSync();
   });
+  keyInput.addEventListener('input', () => {
+    refreshApiKeyStatus();
+  });
   keyInput.addEventListener('change', () => {
     const key = keyInput.value.replace(/\s+/g, '');
     keyInput.value = key;
     if(key) localStorage.setItem(cfg('storage.geminiKeyName','econstudy_gemini_api_key'), key);
+    else localStorage.removeItem(cfg('storage.geminiKeyName','econstudy_gemini_api_key'));
+    refreshApiKeyStatus();
   });
   if(syncBtn) syncBtn.addEventListener('click', triggerSync);
 }
