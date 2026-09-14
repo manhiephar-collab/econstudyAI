@@ -1092,7 +1092,17 @@ function getUserIdFromApiKey(key) {
 }
 
 /* 1. CẤU HÌNH FIREBASE — DỰ ÁN RIÊNG CỦA ECONSTUDY AI */
-const firebaseConfig = cfg('firebase', {});
+/* Có fallback trực tiếp để index.html vẫn hoạt động nếu config.js không tải được. */
+const ECONSTUDY_FIREBASE_FALLBACK = {
+  apiKey: "AIzaSyCfIg3Fi_FXfnKJcwlexhd6l07J0pnhSIs",
+  authDomain: "econstudy-ai.firebaseapp.com",
+  projectId: "econstudy-ai",
+  storageBucket: "econstudy-ai.firebasestorage.app",
+  messagingSenderId: "124089191361",
+  appId: "1:124089191361:web:0f94ff4ec42ca307cdbd40",
+  measurementId: "G-2RZP3ZDWCW"
+};
+const firebaseConfig = cfg('firebase', ECONSTUDY_FIREBASE_FALLBACK);
 
 function hasStandaloneFirebaseConfig(config){
   return !!(
@@ -1106,21 +1116,42 @@ function hasStandaloneFirebaseConfig(config){
 
 let db = null;
 let auth = null;
+let firebaseInitError = null;
 try {
   if (!hasStandaloneFirebaseConfig(firebaseConfig)) {
-    throw new Error('EconStudy AI chưa được cấu hình Firebase riêng trong config.js.');
+    throw new Error('Thiếu cấu hình Firebase của EconStudy AI.');
   }
   if (typeof firebase === 'undefined') {
-    throw new Error('Không tải được Firebase SDK. Hãy kiểm tra kết nối Internet.');
+    throw new Error('Không tải được Firebase App SDK. Hãy kiểm tra kết nối Internet.');
+  }
+  if (typeof firebase.auth !== 'function') {
+    throw new Error('Không tải được Firebase Authentication SDK.');
+  }
+  if (typeof firebase.firestore !== 'function') {
+    throw new Error('Không tải được Cloud Firestore SDK.');
   }
   if (!firebase.apps || firebase.apps.length === 0) {
     firebase.initializeApp(firebaseConfig);
   }
-  db = firebase.firestore();
   auth = firebase.auth();
+  db = firebase.firestore();
+  console.info('EconStudy Firebase connected:', firebaseConfig.projectId);
 } catch (err) {
-  console.warn('Firebase init:', err?.message || err);
-  setTimeout(() => setSyncMsg('☁️ Chưa cấu hình Firebase riêng cho EconStudy AI', true), 0);
+  firebaseInitError = err;
+  console.error('Firebase init error:', err);
+  setTimeout(() => setSyncMsg('❌ Firebase chưa khởi tạo: ' + (err?.message || 'Không xác định'), true, 'error'), 0);
+}
+
+function ensureFirebaseAuthReady(setStatus){
+  if(auth && typeof auth.signInWithEmailAndPassword === 'function' && typeof auth.createUserWithEmailAndPassword === 'function'){
+    return true;
+  }
+  const detail = firebaseInitError?.message || 'Firebase Authentication chưa sẵn sàng.';
+  if(typeof setStatus === 'function'){
+    setStatus('Firebase chưa kết nối: ' + detail, true);
+  }
+  console.error('Firebase Auth unavailable:', detail);
+  return false;
 }
 
 
@@ -1175,6 +1206,9 @@ async function sendPasswordReset(){
   }
 
   try{
+    if(!auth || typeof auth.sendPasswordResetEmail !== 'function'){
+      throw new Error(firebaseInitError?.message || 'Firebase Authentication chưa sẵn sàng.');
+    }
     if(btn){
       btn.disabled = true;
       btn.textContent = 'Đang gửi...';
@@ -2371,6 +2405,7 @@ async function init(){
   changePasswordBtn?.addEventListener('click', changeCurrentUserPassword);
 
   loginBtn?.addEventListener('click', async () => {
+    if(!ensureFirebaseAuthReady(setAuthStatus)) return;
     try{
       setAuthStatus('Đang đăng nhập...');
       await auth.signInWithEmailAndPassword((authEmail.value||'').trim(), authPassword.value||'');
@@ -2378,6 +2413,7 @@ async function init(){
   });
 
   registerBtn?.addEventListener('click', async () => {
+    if(!ensureFirebaseAuthReady(setAuthStatus)) return;
     try{
       const email=(authEmail.value||'').trim();
       const password=authPassword.value||'';
@@ -2388,6 +2424,7 @@ async function init(){
   });
 
   logoutBtn?.addEventListener('click', async () => {
+    if(!ensureFirebaseAuthReady(setAuthStatus)) return;
     try{ await auth.signOut(); }catch(err){ setAuthStatus(friendlyAuthError(err), true); }
   });
 
