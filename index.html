@@ -1819,7 +1819,16 @@ async function syncFromCloud() {
 
     setSyncMsg(`☁️ Kho dữ liệu mới (${uidValue.slice(0,6)})`, false, 'saved');
   } catch (err) {
-    console.error(err);
+    console.error('syncFromCloud error:', err);
+    // Cloud lỗi không được phép làm giao diện trống. Giữ/khôi phục dữ liệu cục bộ của UID hiện tại.
+    activeUid = uidValue;
+    const localToc = getStore('toc');
+    toc = localToc && typeof localToc === 'object'
+      ? localToc
+      : { subjects: [], lessonsBySubject: {} };
+    renderSidebar();
+    renderMain();
+    await updateQuotaUI();
     setSyncMsg('☁️ Không tải được cloud — đang dùng dữ liệu trên máy', true, 'error');
   }
 }
@@ -2373,24 +2382,22 @@ function restoreAdminCollapsed(){
   setAdminCollapsed(collapsed);
 }
 
+const ECONSTUDY_ADMIN_EMAILS = Object.freeze([
+  'econstudyai@gmail.com'
+]);
+
 async function currentUserIsAdmin(){
   const user = auth?.currentUser;
   if(!user) return false;
 
-  // Ưu tiên custom claim nếu sau này bạn cấp quyền admin bằng Firebase Admin SDK.
+  const email = normalizeAccountEmail(user.email);
+  if(ECONSTUDY_ADMIN_EMAILS.includes(email)) return true;
+
+  // Hỗ trợ custom claim nếu sau này bạn chuyển sang Firebase Admin SDK/Cloud Functions.
   try{
     const token = await user.getIdTokenResult();
-    if(token?.claims?.admin === true) return true;
-  }catch(_){ /* bỏ qua và thử Firestore */ }
-
-  if(!db) return false;
-  try{
-    const snap = await db.collection('admins').doc(user.uid).get();
-    return snap.exists;
-  }catch(err){
-    // Với rules chỉ cho phép users/{uid}, truy vấn admins sẽ bị permission-denied.
-    // Đây không phải lỗi đăng nhập/đồng bộ; chỉ ẩn bảng quản trị.
-    if(err?.code !== 'permission-denied') console.warn('currentUserIsAdmin:', err);
+    return token?.claims?.admin === true;
+  }catch(_){
     return false;
   }
 }
@@ -3031,12 +3038,33 @@ async function init(){
       forgotPasswordBox?.classList.remove('show');
       resetForgotPasswordForm();
       authUserLine.textContent = `✅ ${user.email || 'Đã đăng nhập'}`;
-      setAuthStatus('Dữ liệu được gắn với tài khoản này.');
+      const isAdminEmail = normalizeAccountEmail(user.email) === 'econstudyai@gmail.com';
+      setAuthStatus(isAdminEmail
+        ? 'Dữ liệu được gắn với tài khoản này. • 🛡️ EconStudy Admin'
+        : 'Dữ liệu được gắn với tài khoản này.');
+
+      // Luôn dựng giao diện ngay sau khi xác thực. Firebase chỉ đồng bộ dữ liệu,
+      // không được phép chặn việc hiển thị dashboard nếu cloud/rules gặp lỗi.
+      const cachedToc = getStore('toc');
+      toc = cachedToc && typeof cachedToc === 'object'
+        ? cachedToc
+        : { subjects: [], lessonsBySubject: {} };
+      renderSidebar();
+      renderMain();
+      await updateQuotaUI();
+
       // Đăng nhập bằng email luôn dùng kho dữ liệu theo Firebase UID.
       // Không tự lấy dữ liệu cũ từ API Key.
-      await syncFromCloud();
-      await updateQuotaUI();
-      await refreshAdminPanel();
+      try{
+        await syncFromCloud();
+      }catch(err){
+        console.error('Initial cloud sync failed:', err);
+      }
+      try{
+        await refreshAdminPanel();
+      }catch(err){
+        console.warn('Admin panel unavailable:', err?.code || err?.message || err);
+      }
     }else{
       activeUid = null;
       authLoggedOut.style.display='block';
