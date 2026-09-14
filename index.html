@@ -1106,8 +1106,17 @@ function pureSha256(ascii) {
 }
 
 
-/* 1. CẤU HÌNH FIREBASE — PROJECT RIÊNG ECONSTUDY AI */
-const firebaseConfig = cfg('firebase', {});
+/* 1. CẤU HÌNH FIREBASE — ECONSTUDY AI ĐỘC LẬP HOÀN TOÀN
+   Không kết nối, đăng nhập, đọc hoặc ghi dữ liệu từ MedStudy AI. */
+const firebaseConfig = Object.freeze({
+  apiKey: 'AIzaSyCfIg3Fi_FXfnKJcwlexhd6l07J0pnhSIs',
+  authDomain: 'econstudy-ai.firebaseapp.com',
+  projectId: 'econstudy-ai',
+  storageBucket: 'econstudy-ai.firebasestorage.app',
+  messagingSenderId: '124089191361',
+  appId: '1:124089191361:web:0f94ff4ec42ca307cdbd40',
+  measurementId: 'G-2RZP3ZDWCW'
+});
 
 let db = null;
 let auth = null;
@@ -1136,7 +1145,6 @@ try {
   console.error('Firebase init error:', err);
   setTimeout(() => setSyncMsg('❌ Firebase chưa sẵn sàng: ' + (err?.message || 'Không xác định'), true, 'error'), 0);
 }
-
 
 function setPasswordVisible(input, button, visible){
   if(!input || !button) return;
