@@ -1673,6 +1673,40 @@ function delStore(key) {
 
 /* EconStudy AI độc lập: không import/migrate dữ liệu từ ứng dụng hoặc API-key namespace cũ. */
 
+function hasMeaningfulCloudData(data){
+  if(!data || typeof data !== 'object') return false;
+  const subjects = Array.isArray(data.toc?.subjects) ? data.toc.subjects : [];
+  const lessonsBySubject = data.toc?.lessonsBySubject;
+  const lessons = data.lessons;
+  const attempts = data.attempts;
+  return subjects.length > 0 ||
+    (lessonsBySubject && typeof lessonsBySubject === 'object' && Object.values(lessonsBySubject).some(v => Array.isArray(v) && v.length > 0)) ||
+    (lessons && typeof lessons === 'object' && Object.keys(lessons).length > 0) ||
+    (attempts && typeof attempts === 'object' && Object.keys(attempts).length > 0);
+}
+
+function hasMeaningfulLocalData(uidValue){
+  if(!uidValue) return false;
+  try{
+    const rawToc = localStorage.getItem(accountStorageKey('toc', uidValue));
+    if(rawToc){
+      const localToc = JSON.parse(rawToc);
+      if(Array.isArray(localToc?.subjects) && localToc.subjects.length > 0) return true;
+      if(localToc?.lessonsBySubject && Object.values(localToc.lessonsBySubject).some(v => Array.isArray(v) && v.length > 0)) return true;
+    }
+    const prefix = `${cfg('storage.localPrefix','ecostudy')}:${uidValue}:`;
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(!k || !k.startsWith(prefix)) continue;
+      const suffix = k.slice(prefix.length);
+      if(suffix.startsWith('lesson:') || suffix.startsWith('attempts:') || suffix.startsWith('aiKnowledge:')) return true;
+    }
+  }catch(err){
+    console.warn('Local data check failed:', err);
+  }
+  return false;
+}
+
 function resetUiForAccountSwitch() {
   clearProExpiryTimer();
   toc = { subjects: [], lessonsBySubject: {} };
@@ -1712,13 +1746,11 @@ async function syncFromCloud() {
   try {
     activeUid = uidValue;
 
-    // Trước khi đọc kho mới, thử phục hồi dữ liệu cũ theo Gemini API Key.
-    // Tài khoản Firebase là nguồn dữ liệu duy nhất.
-    // Không tự khôi phục dữ liệu cũ theo Gemini API Key.
+    // Firebase UID của EconStudy là nguồn dữ liệu duy nhất.
     let doc = await db.collection('users').doc(uidValue).get();
 
-    // Nếu cloud mới chưa có dữ liệu nhưng máy này còn cache cũ đã được chuyển namespace,
-    // ưu tiên sao lưu cache đó lên UID mới thay vì tạo một kho trống.
+    // Nếu cloud chưa có dữ liệu nhưng thiết bị hiện tại có cache EconStudy của chính UID này,
+    // đẩy cache lên cloud trước để tránh tạo kho trống.
     const cloudDataBefore = doc.exists ? (doc.data() || {}) : {};
     if (!hasMeaningfulCloudData(cloudDataBefore) && hasMeaningfulLocalData(uidValue)) {
       await syncToCloud({immediate:true, silent:true});
@@ -2343,12 +2375,22 @@ function restoreAdminCollapsed(){
 
 async function currentUserIsAdmin(){
   const user = auth?.currentUser;
-  if(!user || !db) return false;
+  if(!user) return false;
+
+  // Ưu tiên custom claim nếu sau này bạn cấp quyền admin bằng Firebase Admin SDK.
+  try{
+    const token = await user.getIdTokenResult();
+    if(token?.claims?.admin === true) return true;
+  }catch(_){ /* bỏ qua và thử Firestore */ }
+
+  if(!db) return false;
   try{
     const snap = await db.collection('admins').doc(user.uid).get();
     return snap.exists;
   }catch(err){
-    console.error('currentUserIsAdmin error:', err);
+    // Với rules chỉ cho phép users/{uid}, truy vấn admins sẽ bị permission-denied.
+    // Đây không phải lỗi đăng nhập/đồng bộ; chỉ ẩn bảng quản trị.
+    if(err?.code !== 'permission-denied') console.warn('currentUserIsAdmin:', err);
     return false;
   }
 }
