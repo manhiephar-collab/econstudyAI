@@ -954,10 +954,30 @@ optgroup{
   <div class="main" id="main"></div>
 </div>
 
-<script src="./config.js"></script>
 <script>
-/* ===== STUDYAI CONFIG BOOTSTRAP ===== */
-const APP_CONFIG = window.STUDYAI_CONFIG || {};
+/* ===== ECONSTUDY AI — STANDALONE CONFIG ===== */
+const APP_CONFIG = {
+  brand: {
+    baseName: 'EconStudy',
+    suffix: 'AI',
+    documentTitle: 'EconStudy AI — Mind Map, Trắc nghiệm & Trợ lý học tập Kinh tế',
+    creatorLine: 'EconStudy AI · Trợ lý học tập ngành Kinh tế'
+  },
+  storage: {
+    localPrefix: 'econstudy',
+    localDbName: 'EconStudyAI_SourceFiles',
+    geminiKeyName: 'econstudy_gemini_api_key'
+  },
+  firebase: {
+    apiKey: 'AIzaSyCfIg3Fi_FXfnKJcwlexhd6l07J0pnhSIs',
+    authDomain: 'econstudy-ai.firebaseapp.com',
+    projectId: 'econstudy-ai',
+    storageBucket: 'econstudy-ai.firebasestorage.app',
+    messagingSenderId: '124089191361',
+    appId: '1:124089191361:web:0f94ff4ec42ca307cdbd40',
+    measurementId: 'G-2RZP3ZDWCW'
+  }
+};
 
 function cfg(path, fallback){
   try{
@@ -1085,22 +1105,9 @@ function pureSha256(ascii) {
   return result;
 }
 
-function getUserIdFromApiKey(key) {
-  if (!key) return null;
-  const clean = key.replace(/\s+/g, '');
-  return pureSha256(clean).slice(0, 24);
-}
 
-/* 1. CẤU HÌNH FIREBASE */
-const firebaseConfig = {
-  apiKey: "AIzaSyCfIg3Fi_FXfnKJcwlexhd6l07J0pnhSIs",
-  authDomain: "econstudy-ai.firebaseapp.com",
-  projectId: "econstudy-ai",
-  storageBucket: "econstudy-ai.firebasestorage.app",
-  messagingSenderId: "124089191361",
-  appId: "1:124089191361:web:0f94ff4ec42ca307cdbd40",
-  measurementId: "G-2RZP3ZDWCW"
-};
+/* 1. CẤU HÌNH FIREBASE — PROJECT RIÊNG ECONSTUDY AI */
+const firebaseConfig = cfg('firebase', {});
 
 let db = null;
 let auth = null;
@@ -1109,22 +1116,27 @@ try {
   if (typeof firebase === 'undefined') {
     throw new Error('Không tải được Firebase SDK. Hãy kiểm tra kết nối Internet.');
   }
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.authDomain) {
+    throw new Error('Thiếu cấu hình Firebase riêng của EconStudy AI.');
+  }
+  if (typeof firebase.auth !== 'function') {
+    throw new Error('Không tải được Firebase Authentication SDK.');
+  }
+  if (typeof firebase.firestore !== 'function') {
+    throw new Error('Không tải được Cloud Firestore SDK.');
+  }
   if (!firebase.apps || firebase.apps.length === 0) {
     firebase.initializeApp(firebaseConfig);
   }
-  db = firebase.firestore();
   auth = firebase.auth();
+  db = firebase.firestore();
+  console.info('EconStudy Firebase connected:', firebaseConfig.projectId);
 } catch (err) {
   firebaseInitError = err;
   console.error('Firebase init error:', err);
-  setTimeout(() => setSyncMsg('❌ Firebase chưa khởi tạo: ' + (err?.message || 'Không xác định'), true, 'error'), 0);
+  setTimeout(() => setSyncMsg('❌ Firebase chưa sẵn sàng: ' + (err?.message || 'Không xác định'), true, 'error'), 0);
 }
 
-function ensureFirebaseAuthReady(){
-  if(auth && typeof auth.signInWithEmailAndPassword === 'function' && typeof auth.createUserWithEmailAndPassword === 'function') return true;
-  setAuthStatus('Firebase Authentication chưa sẵn sàng: ' + (firebaseInitError?.message || 'hãy kiểm tra kết nối hoặc cấu hình Firebase.'), true);
-  return false;
-}
 
 function setPasswordVisible(input, button, visible){
   if(!input || !button) return;
@@ -1502,7 +1514,7 @@ function setPlanCollapsed(collapsed){
   box.classList.toggle('collapsed', !!collapsed);
   btn.textContent = collapsed ? 'Mở' : 'Thu gọn';
   btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  try{ localStorage.setItem('medstudy_plan_collapsed', collapsed ? '1' : '0'); }catch(_){}
+  try{ localStorage.setItem('econstudy_plan_collapsed', collapsed ? '1' : '0'); }catch(_){}
 }
 
 function togglePlanBox(){
@@ -1514,7 +1526,7 @@ function togglePlanBox(){
 function restorePlanCollapsed(){
   let collapsed=true;
   try{
-    const saved=localStorage.getItem('medstudy_plan_collapsed');
+    const saved=localStorage.getItem('econstudy_plan_collapsed');
     if(saved==='0') collapsed=false;
     if(saved==='1') collapsed=true;
   }catch(_){}
@@ -1619,7 +1631,7 @@ let activeUid = null;
 
 function accountStorageKey(key, uidOverride = null) {
   const uidValue = uidOverride || activeUid;
-  const prefix = 'econstudy';
+  const prefix = cfg('storage.localPrefix','ecostudy');
   return uidValue ? `${prefix}:${uidValue}:${key}` : key;
 }
 
@@ -1651,144 +1663,7 @@ function delStore(key) {
   }
 }
 
-/* Chỉ dùng một lần để chuyển cache cũ (toc / lesson:* / attempts:*) sang API đã lưu trên máy. */
-function migrateLegacyLocalCacheToAccount(uidValue) {
-  if (!uidValue) return;
-  const prefix = 'econstudy';
-  const marker = `${prefix}:migrated:${uidValue}`;
-  if (localStorage.getItem(marker) === '1') return;
-
-  const namespacedToc = localStorage.getItem(accountStorageKey('toc', uidValue));
-  if (!namespacedToc) {
-    const oldToc = localStorage.getItem('toc');
-    if (oldToc) localStorage.setItem(accountStorageKey('toc', uidValue), oldToc);
-  }
-
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && (k.startsWith('lesson:') || k.startsWith('attempts:'))) keys.push(k);
-  }
-  for (const k of keys) {
-    const oldVal = localStorage.getItem(k);
-    const newKey = accountStorageKey(k, uidValue);
-    if (oldVal !== null && localStorage.getItem(newKey) === null) {
-      localStorage.setItem(newKey, oldVal);
-    }
-  }
-  localStorage.setItem(marker, '1');
-}
-
-function migrateApiKeyAccountCacheToFirebaseUid(firebaseUid, apiKey) {
-  if (!firebaseUid || !apiKey) return;
-  const oldUid = getUserIdFromApiKey(apiKey);
-  if (!oldUid || oldUid === firebaseUid) return;
-  const prefix = 'econstudy';
-  const marker = `${prefix}:auth-migrated:${firebaseUid}:${oldUid}`;
-  if (localStorage.getItem(marker) === '1') return;
-
-  const oldPrefix = `${prefix}:${oldUid}:`;
-  const newPrefix = `${prefix}:${firebaseUid}:`;
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && k.startsWith(oldPrefix)) keys.push(k);
-  }
-  for (const oldKey of keys) {
-    const suffix = oldKey.slice(oldPrefix.length);
-    const newKey = newPrefix + suffix;
-    if (localStorage.getItem(newKey) === null) {
-      const val = localStorage.getItem(oldKey);
-      if (val !== null) localStorage.setItem(newKey, val);
-    }
-  }
-  localStorage.setItem(marker, '1');
-}
-
-
-function hasMeaningfulCloudData(data) {
-  if (!data || typeof data !== 'object') return false;
-  const subjects = data.toc?.subjects;
-  const lessonsBySubject = data.toc?.lessonsBySubject;
-  return !!(
-    (Array.isArray(subjects) && subjects.length) ||
-    (lessonsBySubject && Object.keys(lessonsBySubject).some(k => (lessonsBySubject[k] || []).length)) ||
-    (data.lessons && Object.keys(data.lessons).length) ||
-    (data.attempts && Object.keys(data.attempts).length)
-  );
-}
-
-function hasMeaningfulLocalData(uidValue) {
-  if (!uidValue) return false;
-  try {
-    const rawToc = localStorage.getItem(accountStorageKey('toc', uidValue));
-    if (rawToc) {
-      const t = JSON.parse(rawToc);
-      if ((Array.isArray(t?.subjects) && t.subjects.length) ||
-          (t?.lessonsBySubject && Object.keys(t.lessonsBySubject).some(k => (t.lessonsBySubject[k] || []).length))) {
-        return true;
-      }
-    }
-    const prefix = `${'econstudy'}:${uidValue}:`;
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(prefix) &&
-          (k.slice(prefix.length).startsWith('lesson:') || k.slice(prefix.length).startsWith('attempts:'))) {
-        return true;
-      }
-    }
-  } catch (e) {
-    console.error('hasMeaningfulLocalData error:', e);
-  }
-  return false;
-}
-
-/*
-  KHÔI PHỤC DỮ LIỆU CŨ:
-  Bản trước dùng SHA-256 của Gemini API Key làm document id Firestore.
-  Khi chuyển sang Firebase Auth, ta chỉ sao chép dữ liệu cũ sang users/{authUid}
-  nếu kho tài khoản mới chưa có dữ liệu thực. Tuyệt đối không ghi đè dữ liệu mới.
-*/
-// Hàm legacy giữ lại để tương thích mã cũ nhưng KHÔNG được gọi tự động.
-async function recoverLegacyApiKeyCloudData(firebaseUid, apiKey) {
-  if (!db || !firebaseUid || !apiKey) return false;
-
-  const oldUid = getUserIdFromApiKey(apiKey);
-  if (!oldUid || oldUid === firebaseUid) return false;
-
-  try {
-    migrateApiKeyAccountCacheToFirebaseUid(firebaseUid, apiKey);
-
-    const newRef = db.collection('users').doc(firebaseUid);
-    const oldRef = db.collection('users').doc(oldUid);
-
-    const [newSnap, oldSnap] = await Promise.all([newRef.get(), oldRef.get()]);
-    const newData = newSnap.exists ? (newSnap.data() || {}) : {};
-    const oldData = oldSnap.exists ? (oldSnap.data() || {}) : {};
-
-    if (hasMeaningfulCloudData(newData)) return false;
-    if (!hasMeaningfulCloudData(oldData)) return false;
-
-    // Không mang trường plan từ kho cũ sang tài khoản mới.
-    // Gói Pro chỉ được cấp bởi quản trị viên/backend, không từ dữ liệu client cũ.
-    const { plan: _legacyPlan, proUntil: _legacyProUntil, ...safeOldData } = oldData;
-    await newRef.set({
-      ...safeOldData,
-      email: normalizeAccountEmail(auth?.currentUser?.email || safeOldData.email || ''),
-      emailLower: normalizeAccountEmail(auth?.currentUser?.email || safeOldData.email || ''),
-      plan: 'free',
-      migratedFromApiKeyUid: oldUid,
-      migratedAt: Date.now(),
-      updatedAt: Date.now()
-    }, { merge: true });
-
-    console.info('Đã khôi phục dữ liệu Firestore cũ từ', oldUid, 'sang', firebaseUid);
-    return true;
-  } catch (err) {
-    console.error('recoverLegacyApiKeyCloudData error:', err);
-    return false;
-  }
-}
+/* EconStudy AI độc lập: không import/migrate dữ liệu từ ứng dụng hoặc API-key namespace cũ. */
 
 function resetUiForAccountSwitch() {
   clearProExpiryTimer();
@@ -1954,7 +1829,7 @@ async function performCloudSync({silent=false}={}) {
       updatedAt: Date.now()
     };
 
-    const prefix = `${'econstudy'}:${uidValue}:`;
+    const prefix = `${cfg('storage.localPrefix','ecostudy')}:${uidValue}:`;
     for (let i = 0; i < localStorage.length; i++) {
       const storageKey = localStorage.key(i);
       if (!storageKey || !storageKey.startsWith(prefix)) continue;
@@ -2100,7 +1975,7 @@ function mobileViewName(){
 
 function buildMobileHistoryState(view = mobileViewName()){
   return {
-    medstudyMobileNav: true,
+    econstudyMobileNav: true,
     view,
     subjectId: currentSubjectId || null,
     lessonId: currentLessonId || null,
@@ -2124,7 +1999,7 @@ function pushMobileHistory(view){
 }
 
 function restoreMobileHistoryState(state){
-  if(!isMobileBrowserView() || !state?.medstudyMobileNav) return false;
+  if(!isMobileBrowserView() || !state?.econstudyMobileNav) return false;
 
   mobileHistoryRestoring = true;
   try{
@@ -2187,9 +2062,9 @@ let currentMmRoot = null;
 
 /* LƯU TÀI LIỆU GỐC THEO TỪNG BÀI HỌC BẰNG INDEXEDDB
    - Không dùng localStorage vì PDF/ảnh có thể lớn.
-   - Mỗi API Key (activeUid) + mỗi bài học có một kho tài liệu riêng trên thiết bị.
+   - Mỗi tài khoản Firebase (activeUid) + mỗi bài học có một kho tài liệu riêng trên thiết bị.
 */
-const SOURCE_DB_NAME = 'EconStudyAI_SourceFiles';
+const SOURCE_DB_NAME = cfg('storage.localDbName', 'EconStudyAI_SourceFiles');
 const SOURCE_DB_VERSION = 1;
 const SOURCE_STORE = 'lessonSources';
 
@@ -2438,7 +2313,7 @@ function setAdminCollapsed(collapsed){
   btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 
   try{
-    localStorage.setItem('medstudy_admin_collapsed', collapsed ? '1' : '0');
+    localStorage.setItem('econstudy_admin_collapsed', collapsed ? '1' : '0');
   }catch(_){}
 }
 
@@ -2451,7 +2326,7 @@ function toggleAdminPanel(){
 function restoreAdminCollapsed(){
   let collapsed = true;
   try{
-    const saved = localStorage.getItem('medstudy_admin_collapsed');
+    const saved = localStorage.getItem('econstudy_admin_collapsed');
     if(saved === '0') collapsed = false;
     if(saved === '1') collapsed = true;
   }catch(_){}
@@ -2926,7 +2801,7 @@ function adminSelectUserFromList(uid){
 async function init(){
   const keyInput = document.getElementById('apiKeyInput');
   const syncBtn = document.getElementById('manualSyncBtn');
-  const savedKey = (localStorage.getItem('econstudy_gemini_api_key') || '').replace(/\s+/g, '');
+  const savedKey = (localStorage.getItem(cfg('storage.geminiKeyName','econstudy_gemini_api_key')) || '').replace(/\s+/g, '');
 
   const authEmail = document.getElementById('authEmail');
   const authPassword = document.getElementById('authPassword');
@@ -2984,7 +2859,7 @@ async function init(){
       alert('Vui lòng nhập Google Gemini API Key trước!');
       return;
     }
-    localStorage.setItem('econstudy_gemini_api_key', key);
+    localStorage.setItem(cfg('storage.geminiKeyName','econstudy_gemini_api_key'), key);
     if (!auth?.currentUser) {
       setSyncMsg('👤 Hãy đăng nhập tài khoản trước', true);
       return;
@@ -3041,7 +2916,6 @@ async function init(){
   changePasswordBtn?.addEventListener('click', changeCurrentUserPassword);
 
   loginBtn?.addEventListener('click', async () => {
-    if(!ensureFirebaseAuthReady()) return;
     try{
       setAuthStatus('Đang đăng nhập...');
       await auth.signInWithEmailAndPassword((authEmail.value||'').trim(), authPassword.value||'');
@@ -3049,7 +2923,6 @@ async function init(){
   });
 
   registerBtn?.addEventListener('click', async () => {
-    if(!ensureFirebaseAuthReady()) return;
     try{
       const email=(authEmail.value||'').trim();
       const password=authPassword.value||'';
@@ -3060,7 +2933,6 @@ async function init(){
   });
 
   logoutBtn?.addEventListener('click', async () => {
-    if(!ensureFirebaseAuthReady()) return;
     try{ await auth.signOut(); }catch(err){ setAuthStatus(friendlyAuthError(err), true); }
   });
 
@@ -3100,15 +2972,6 @@ async function init(){
     if(card) adminSelectUserFromList(card.dataset.adminUid);
   });
 
-  // Luôn dựng giao diện trước; Firebase chỉ quyết định dữ liệu tài khoản/sync.
-  renderSidebar();
-  renderMain();
-
-  if(!auth){
-    setAuthStatus('Firebase Authentication chưa sẵn sàng.', true);
-    setSyncMsg('❌ Chưa kết nối Firebase', true, 'error');
-  }
-
   auth?.onAuthStateChanged(async user => {
     if(user){
       await ensureOwnEmailIndex(user);
@@ -3145,7 +3008,7 @@ async function init(){
   keyInput.addEventListener('change', () => {
     const key = keyInput.value.replace(/\s+/g, '');
     keyInput.value = key;
-    if(key) localStorage.setItem('econstudy_gemini_api_key', key);
+    if(key) localStorage.setItem(cfg('storage.geminiKeyName','econstudy_gemini_api_key'), key);
   });
   if(syncBtn) syncBtn.addEventListener('click', triggerSync);
 }
@@ -4521,7 +4384,7 @@ function renderAiKnowledgeAnswer(target, rawText){
         const tex = dd ?? br ?? inlineDollar ?? inlineParen ?? '';
         const id = mathItems.length;
         mathItems.push({tex, display});
-        return `@@MEDSTUDY_MATH_${id}@@`;
+        return `@@ECONSTUDY_MATH_${id}@@`;
       }
     );
 
@@ -4542,11 +4405,11 @@ function renderAiKnowledgeAnswer(target, rawText){
     const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
     const nodes = [];
     while(walker.nextNode()) nodes.push(walker.currentNode);
-    const tokenRe = /@@MEDSTUDY_MATH_(\d+)@@/g;
+    const tokenRe = /@@ECONSTUDY_MATH_(\d+)@@/g;
 
     nodes.forEach(node => {
       const val = node.nodeValue || '';
-      if(!val.includes('@@MEDSTUDY_MATH_')) return;
+      if(!val.includes('@@ECONSTUDY_MATH_')) return;
       const frag = document.createDocumentFragment();
       let last = 0, match;
       tokenRe.lastIndex = 0;
@@ -5184,7 +5047,7 @@ function renderMindmap(container){
       mmToolsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       mmToolsToggle.textContent = open ? '✕ Đóng' : '⚙ Công cụ';
     }
-    try{ localStorage.setItem('medstudy_mm_tools_open', open ? '1' : '0'); }catch(_){}
+    try{ localStorage.setItem('econstudy_mm_tools_open', open ? '1' : '0'); }catch(_){}
   }
 
   // Máy tính luôn hiện thanh công cụ đầy đủ như cũ.
@@ -5193,7 +5056,7 @@ function renderMindmap(container){
   let toolsOpen = !isPhoneToolbar;
   if(isPhoneToolbar){
     try{
-      const saved = localStorage.getItem('medstudy_mm_tools_open');
+      const saved = localStorage.getItem('econstudy_mm_tools_open');
       toolsOpen = saved === '1';
     }catch(_){}
   }
