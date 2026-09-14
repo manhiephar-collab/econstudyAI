@@ -558,6 +558,10 @@ input::placeholder,textarea::placeholder{color:#7f95b4}
 }
 
 
+
+/* Trang chủ sidebar */
+.brand{cursor:pointer;transition:.18s ease}
+.brand:hover{background:rgba(20,45,78,.34);border-radius:16px}
 /* ===== Readability / contrast fixes ===== */
 body,
 .sidebar,
@@ -798,18 +802,24 @@ optgroup{
   .ai-knowledge-panel{padding:18px}
 }
 
+
+.compact-home-tools .dashboard-panel{min-height:190px}
+.compact-home-tools .dashboard-panel h3{font-size:22px;margin-top:12px}
+.compact-home-tools .dashboard-panel p{margin-bottom:0}
+
 </style>
 </head>
 <body>
 <div class="app">
   <div class="sidebar" id="sidebar">
-    <div class="brand">
+    <div class="brand" id="brandHome" role="button" tabindex="0" title="Về trang chủ">
       <div class="brand-head">
         <span class="mark" aria-label="EconStudy AI logo"><i class="logo-bar logo-bar-1"></i><i class="logo-bar logo-bar-2"></i><i class="logo-bar logo-bar-3"></i></span>
         <h1>EconStudy AI</h1>
       </div>
       <span class="brand-sub">Học kinh tế thông minh cho tương lai số</span>
     </div>
+
 
     <div class="api-box">
       <div id="authBox" style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid rgba(15,118,110,.12);">
@@ -931,14 +941,14 @@ optgroup{
         </div>
       </div>
 
-      <label>Google Gemini API Key:</label>
+      <label>Google Gemini API Key <span style="font-weight:500;color:var(--muted);">(Google AI Studio)</span>:</label>
       <div class="api-input-wrap">
         <input type="password" id="apiKeyInput" placeholder="AIzaSy...">
         <button class="btn small warm" id="manualSyncBtn" type="button">Đồng bộ</button>
       </div>
       <a href="https://aistudio.google.com/app/apikey" target="_blank">👉 Lấy mã tại Google AI Studio</a>
       <div class="sync-status" id="syncStatusLine">🔑 Chưa nhập API Key</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.45;">Gemini API Key chỉ dùng để gọi AI; dữ liệu đồng bộ theo tài khoản học tập.</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.45;">Gemini API Key chỉ dùng để gọi AI. Không dùng Firebase API Key ở ô này; Firebase đã được cấu hình riêng cho tài khoản và dữ liệu.</div>
     </div>
 
     <div id="subjectList" style="display:flex; flex-direction:column; gap:2px;"></div>
@@ -1649,6 +1659,136 @@ async function refundMonthlyQuota(kind, amount=1){
 */
 let activeUid = null;
 
+
+/* ===== TRẠNG THÁI ỨNG DỤNG & ĐỒNG BỘ TÀI KHOẢN ===== */
+let toc = { subjects: [], lessonsBySubject: {} };
+let currentSubjectId = null;
+let currentLessonId = null;
+let currentLesson = null;
+let uploadedFilesQueue = [];
+let activeTab = 'mindmap';
+let quiz = { index:0, answers:[], started:false, done:false, reviewMode:false, reviewQuestions:[] };
+let openSubjects = new Set();
+let cloudSourceArchiveText = '';
+let cloudSourceArchiveMeta = null;
+
+function normalizeToc(raw){
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const subjects = Array.isArray(src.subjects) ? src.subjects : [];
+  const lessonsBySubject = src.lessonsBySubject && typeof src.lessonsBySubject === 'object' ? src.lessonsBySubject : {};
+  return { subjects, lessonsBySubject };
+}
+
+function loadLocalAccountState(){
+  toc = normalizeToc(getStore('toc'));
+  if(!toc.subjects.length) toc = { subjects: [], lessonsBySubject: {} };
+  openSubjects = new Set(toc.subjects.map(s => s.id));
+}
+
+function collectAccountMap(prefix){
+  const out = {};
+  for(const subj of (toc.subjects || [])){
+    for(const lesson of (toc.lessonsBySubject?.[subj.id] || [])){
+      const v = getStore(prefix + lesson.id);
+      if(v != null) out[lesson.id] = v;
+    }
+  }
+  return out;
+}
+
+function applyCloudAccountData(data){
+  const cloudToc = normalizeToc(data?.toc);
+  toc = cloudToc;
+  setStore('toc', toc);
+  for(const [id, value] of Object.entries(data?.lessons || {})) setStore('lesson:'+id, value);
+  for(const [id, value] of Object.entries(data?.attempts || {})) setStore('attempts:'+id, value);
+  for(const [id, value] of Object.entries(data?.aiKnowledge || {})) setStore('aiKnowledge:'+id, value);
+  accountPlan = cloudPlanIsActive(data) ? 'pro' : 'free';
+  accountProUntil = data?.proUntil || null;
+  accountUsage = normalizeUsage(data?.usage);
+  accountDocumentCycle = normalizeDocumentCycle(data?.documentCycle);
+  if(accountPlan === 'pro') scheduleProExpiry(accountProUntil); else clearProExpiryTimer();
+  openSubjects = new Set(toc.subjects.map(s => s.id));
+}
+
+async function syncFromCloud(){
+  const user = auth?.currentUser;
+  if(!user || !db){
+    loadLocalAccountState();
+    renderSidebar();
+    renderMain();
+    return false;
+  }
+  try{
+    setSyncMsg('☁️ Đang đồng bộ...', false, 'syncing');
+    const ref = db.collection('users').doc(user.uid);
+    const snap = await ref.get();
+    const data = snap.exists ? (snap.data() || {}) : {};
+    if(snap.exists && hasMeaningfulCloudData(data)){
+      applyCloudAccountData(data);
+    }else{
+      loadLocalAccountState();
+      await ref.set({
+        email: normalizeAccountEmail(user.email),
+        emailLower: normalizeAccountEmail(user.email),
+        toc,
+        lessons: collectAccountMap('lesson:'),
+        attempts: collectAccountMap('attempts:'),
+        aiKnowledge: collectAccountMap('aiKnowledge:'),
+        usage: normalizeUsage(data?.usage),
+        documentCycle: normalizeDocumentCycle(data?.documentCycle),
+        updatedAt: Date.now()
+      }, {merge:true});
+    }
+    renderSidebar();
+    renderMain();
+    setSyncMsg('✅ Đã đồng bộ dữ liệu', false, 'saved');
+    return true;
+  }catch(err){
+    console.error('syncFromCloud error:', err);
+    loadLocalAccountState();
+    renderSidebar();
+    renderMain();
+    setSyncMsg('⚠️ Đang dùng dữ liệu trên thiết bị', true, 'offline');
+    return false;
+  }
+}
+
+async function syncToCloud(){
+  const user = auth?.currentUser;
+  if(!user || !db) return false;
+  try{
+    await db.collection('users').doc(user.uid).set({
+      email: normalizeAccountEmail(user.email),
+      emailLower: normalizeAccountEmail(user.email),
+      toc: normalizeToc(toc),
+      lessons: collectAccountMap('lesson:'),
+      attempts: collectAccountMap('attempts:'),
+      aiKnowledge: collectAccountMap('aiKnowledge:'),
+      updatedAt: Date.now()
+    }, {merge:true});
+    setSyncMsg('✅ Đã lưu', false, 'saved');
+    return true;
+  }catch(err){
+    console.error('syncToCloud error:', err);
+    setSyncMsg('⚠️ Chưa đồng bộ được Firebase', true, 'offline');
+    return false;
+  }
+}
+
+function resetUiForAccountSwitch(){
+  toc = { subjects: [], lessonsBySubject: {} };
+  currentSubjectId = null;
+  currentLessonId = null;
+  currentLesson = null;
+  uploadedFilesQueue = [];
+  activeTab = 'mindmap';
+  quiz = { index:0, answers:[], started:false, done:false, reviewMode:false, reviewQuestions:[] };
+  openSubjects = new Set();
+  cloudSourceArchiveText = '';
+  cloudSourceArchiveMeta = null;
+}
+
 function accountStorageKey(key, uidOverride = null) {
   const uidValue = uidOverride || activeUid;
   const prefix = cfg('storage.localPrefix','econstudy');
@@ -2350,14 +2490,11 @@ async function init(){
       return false;
     }
 
-    // Gemini API keys thường bắt đầu bằng AIza. Không chặn các key hợp lệ khác,
-    // chỉ hiển thị cảnh báo nhẹ nếu định dạng trông bất thường.
-    if(!/^AIza[A-Za-z0-9_-]{20,}$/.test(key)){
-      setSyncMsg('⚠️ Đã nhập API Key • kiểm tra lại định dạng', false, 'offline');
-      return true;
-    }
-
-    setSyncMsg('✅ API Key đã sẵn sàng', false, 'saved');
+    // Không thể phân biệt chắc chắn Gemini API Key và Firebase Web API Key
+    // chỉ bằng định dạng vì cả hai có thể bắt đầu bằng AIza.
+    // Chỉ xác nhận rằng người dùng đã nhập/lưu key; tính hợp lệ sẽ được
+    // xác minh khi thực hiện lệnh gọi Gemini thực tế.
+    setSyncMsg('✅ Đã nhập Gemini API Key', false, 'saved');
     return true;
   }
 
@@ -2505,8 +2642,11 @@ async function init(){
       resetForgotPasswordForm();
       authUserLine.textContent = `✅ ${user.email || 'Đã đăng nhập'}`;
       setAuthStatus('Dữ liệu được gắn với tài khoản này.');
-      // Đăng nhập bằng email luôn dùng kho dữ liệu theo Firebase UID.
-      // Không tự lấy dữ liệu cũ từ API Key.
+      // Render trang chủ ngay, không chờ mạng/Firebase.
+      loadLocalAccountState();
+      renderSidebar();
+      renderMain();
+      // Sau đó mới đồng bộ dữ liệu tài khoản.
       await syncFromCloud();
       await updateQuotaUI();
       await refreshAdminPanel();
@@ -2541,6 +2681,26 @@ async function init(){
   if(syncBtn) syncBtn.addEventListener('click', triggerSync);
 }
 init();
+
+function goHome(){
+  currentSubjectId = null;
+  currentLessonId = null;
+  currentLesson = null;
+  activeTab = 'mindmap';
+  uploadedFilesQueue = [];
+  cloudSourceArchiveText = '';
+  cloudSourceArchiveMeta = null;
+  renderSidebar();
+  renderMain();
+  const main = document.getElementById('main');
+  if(main) main.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+const homeBtn = document.getElementById('homeBtn');
+const brandHome = document.getElementById('brandHome');
+homeBtn?.addEventListener('click', goHome);
+brandHome?.addEventListener('click', goHome);
+brandHome?.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); goHome(); } });
 
 /* 3. SIDEBAR */
 function renderSidebar(){
