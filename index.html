@@ -1093,17 +1093,18 @@ function getUserIdFromApiKey(key) {
 
 /* 1. CẤU HÌNH FIREBASE */
 const firebaseConfig = {
-  apiKey: "AIzaSyA2m2LU633oo7MI8aqsxLw-R9Uhtby82P8",
-  authDomain: "medstudy-ai-178bb.firebaseapp.com",
-  projectId: "medstudy-ai-178bb",
-  storageBucket: "medstudy-ai-178bb.firebasestorage.app",
-  messagingSenderId: "483431047311",
-  appId: "1:483431047311:web:fff6a9fc454c028762d0fa",
-  measurementId: "G-RBLZXMX93Y"
+  apiKey: "AIzaSyCfIg3Fi_FXfnKJcwlexhd6l07J0pnhSIs",
+  authDomain: "econstudy-ai.firebaseapp.com",
+  projectId: "econstudy-ai",
+  storageBucket: "econstudy-ai.firebasestorage.app",
+  messagingSenderId: "124089191361",
+  appId: "1:124089191361:web:0f94ff4ec42ca307cdbd40",
+  measurementId: "G-2RZP3ZDWCW"
 };
 
 let db = null;
 let auth = null;
+let firebaseInitError = null;
 try {
   if (typeof firebase === 'undefined') {
     throw new Error('Không tải được Firebase SDK. Hãy kiểm tra kết nối Internet.');
@@ -1114,10 +1115,16 @@ try {
   db = firebase.firestore();
   auth = firebase.auth();
 } catch (err) {
+  firebaseInitError = err;
   console.error('Firebase init error:', err);
-  setTimeout(() => setSyncMsg('☁️ Không tải được dịch vụ đồng bộ', true), 0);
+  setTimeout(() => setSyncMsg('❌ Firebase chưa khởi tạo: ' + (err?.message || 'Không xác định'), true, 'error'), 0);
 }
 
+function ensureFirebaseAuthReady(){
+  if(auth && typeof auth.signInWithEmailAndPassword === 'function' && typeof auth.createUserWithEmailAndPassword === 'function') return true;
+  setAuthStatus('Firebase Authentication chưa sẵn sàng: ' + (firebaseInitError?.message || 'hãy kiểm tra kết nối hoặc cấu hình Firebase.'), true);
+  return false;
+}
 
 function setPasswordVisible(input, button, visible){
   if(!input || !button) return;
@@ -1612,7 +1619,7 @@ let activeUid = null;
 
 function accountStorageKey(key, uidOverride = null) {
   const uidValue = uidOverride || activeUid;
-  const prefix = cfg('storage.localPrefix','ecostudy');
+  const prefix = 'econstudy';
   return uidValue ? `${prefix}:${uidValue}:${key}` : key;
 }
 
@@ -1647,7 +1654,7 @@ function delStore(key) {
 /* Chỉ dùng một lần để chuyển cache cũ (toc / lesson:* / attempts:*) sang API đã lưu trên máy. */
 function migrateLegacyLocalCacheToAccount(uidValue) {
   if (!uidValue) return;
-  const prefix = cfg('storage.localPrefix','ecostudy');
+  const prefix = 'econstudy';
   const marker = `${prefix}:migrated:${uidValue}`;
   if (localStorage.getItem(marker) === '1') return;
 
@@ -1676,7 +1683,7 @@ function migrateApiKeyAccountCacheToFirebaseUid(firebaseUid, apiKey) {
   if (!firebaseUid || !apiKey) return;
   const oldUid = getUserIdFromApiKey(apiKey);
   if (!oldUid || oldUid === firebaseUid) return;
-  const prefix = cfg('storage.localPrefix','ecostudy');
+  const prefix = 'econstudy';
   const marker = `${prefix}:auth-migrated:${firebaseUid}:${oldUid}`;
   if (localStorage.getItem(marker) === '1') return;
 
@@ -1722,7 +1729,7 @@ function hasMeaningfulLocalData(uidValue) {
         return true;
       }
     }
-    const prefix = `${cfg('storage.localPrefix','ecostudy')}:${uidValue}:`;
+    const prefix = `${'econstudy'}:${uidValue}:`;
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (k && k.startsWith(prefix) &&
@@ -1947,7 +1954,7 @@ async function performCloudSync({silent=false}={}) {
       updatedAt: Date.now()
     };
 
-    const prefix = `${cfg('storage.localPrefix','ecostudy')}:${uidValue}:`;
+    const prefix = `${'econstudy'}:${uidValue}:`;
     for (let i = 0; i < localStorage.length; i++) {
       const storageKey = localStorage.key(i);
       if (!storageKey || !storageKey.startsWith(prefix)) continue;
@@ -2182,7 +2189,7 @@ let currentMmRoot = null;
    - Không dùng localStorage vì PDF/ảnh có thể lớn.
    - Mỗi API Key (activeUid) + mỗi bài học có một kho tài liệu riêng trên thiết bị.
 */
-const SOURCE_DB_NAME = cfg('storage.localDbName', `${cfg('brand.baseName','StudyAI').replace(/[^a-zA-Z0-9_-]/g,'')}_SourceFiles`);
+const SOURCE_DB_NAME = 'EconStudyAI_SourceFiles';
 const SOURCE_DB_VERSION = 1;
 const SOURCE_STORE = 'lessonSources';
 
@@ -2919,7 +2926,7 @@ function adminSelectUserFromList(uid){
 async function init(){
   const keyInput = document.getElementById('apiKeyInput');
   const syncBtn = document.getElementById('manualSyncBtn');
-  const savedKey = (localStorage.getItem('gemini_api_key') || '').replace(/\s+/g, '');
+  const savedKey = (localStorage.getItem('econstudy_gemini_api_key') || '').replace(/\s+/g, '');
 
   const authEmail = document.getElementById('authEmail');
   const authPassword = document.getElementById('authPassword');
@@ -2977,7 +2984,7 @@ async function init(){
       alert('Vui lòng nhập Google Gemini API Key trước!');
       return;
     }
-    localStorage.setItem('gemini_api_key', key);
+    localStorage.setItem('econstudy_gemini_api_key', key);
     if (!auth?.currentUser) {
       setSyncMsg('👤 Hãy đăng nhập tài khoản trước', true);
       return;
@@ -3034,6 +3041,7 @@ async function init(){
   changePasswordBtn?.addEventListener('click', changeCurrentUserPassword);
 
   loginBtn?.addEventListener('click', async () => {
+    if(!ensureFirebaseAuthReady()) return;
     try{
       setAuthStatus('Đang đăng nhập...');
       await auth.signInWithEmailAndPassword((authEmail.value||'').trim(), authPassword.value||'');
@@ -3041,6 +3049,7 @@ async function init(){
   });
 
   registerBtn?.addEventListener('click', async () => {
+    if(!ensureFirebaseAuthReady()) return;
     try{
       const email=(authEmail.value||'').trim();
       const password=authPassword.value||'';
@@ -3051,6 +3060,7 @@ async function init(){
   });
 
   logoutBtn?.addEventListener('click', async () => {
+    if(!ensureFirebaseAuthReady()) return;
     try{ await auth.signOut(); }catch(err){ setAuthStatus(friendlyAuthError(err), true); }
   });
 
@@ -3090,6 +3100,15 @@ async function init(){
     if(card) adminSelectUserFromList(card.dataset.adminUid);
   });
 
+  // Luôn dựng giao diện trước; Firebase chỉ quyết định dữ liệu tài khoản/sync.
+  renderSidebar();
+  renderMain();
+
+  if(!auth){
+    setAuthStatus('Firebase Authentication chưa sẵn sàng.', true);
+    setSyncMsg('❌ Chưa kết nối Firebase', true, 'error');
+  }
+
   auth?.onAuthStateChanged(async user => {
     if(user){
       await ensureOwnEmailIndex(user);
@@ -3126,7 +3145,7 @@ async function init(){
   keyInput.addEventListener('change', () => {
     const key = keyInput.value.replace(/\s+/g, '');
     keyInput.value = key;
-    if(key) localStorage.setItem('gemini_api_key', key);
+    if(key) localStorage.setItem('econstudy_gemini_api_key', key);
   });
   if(syncBtn) syncBtn.addEventListener('click', triggerSync);
 }
